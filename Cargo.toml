@@ -1,0 +1,17 @@
+[package]
+name = "antig"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+lto = true
+strip = true
+panic = "abort"
+opt-level = "z"
+codegen-units = 4
+
+[dependencies]
+clap = { version = "4.2.1", features = ["derive"] }
+crossterm = "0.26.1"
+indicatif = "0.17.3"
+thiserror = "1.0.40"
