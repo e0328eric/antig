@@ -17,7 +17,7 @@ struct Command {
     #[clap(short, long)]
     recursive: bool,
     #[clap(long)]
-    quiet: bool,
+    noise: bool,
     #[clap(long = "no-progress")]
     no_progress_bar: bool,
 }
@@ -108,7 +108,7 @@ fn main() -> Result<(), AntigErr> {
                 &source,
                 &command.destination,
                 &dir_content_size,
-                command.quiet,
+                command.noise,
                 command.no_progress_bar,
             )?;
         } else {
@@ -215,7 +215,7 @@ fn copy_directory_recursive(
     source: &str,
     destination: &str,
     dir_content_size: &Arc<AtomicU64>,
-    quiet: bool,
+    noise: bool,
     no_progress_bar: bool,
 ) -> Result<(), AntigErr> {
     let make_destination = PathBuf::from(&destination).join(if Path::new(source).is_absolute() {
@@ -249,7 +249,7 @@ fn copy_directory_recursive(
                     .unwrap(),
             );
 
-            if !quiet {
+            if noise {
                 bar.println(format!(
                     "cp: {} => {}",
                     entry.path().display(),
