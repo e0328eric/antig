@@ -1,6 +1,10 @@
 [package]
 name = "antig"
 version = "0.1.0"
+license = "MIT"
+description = "A simple `cp` command"
+authors = ["Sungbae Jeong <almagest0328@gmail.com>"]
+repository = "https://github.com/e0328eric/antig.git"
 edition = "2021"
 
 [profile.release]
