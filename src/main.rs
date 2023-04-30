@@ -15,10 +15,13 @@ struct Command {
     sources: Vec<String>,
     destination: String,
     #[clap(short, long)]
+    /// Copy contents recursively. Usually it is used to copy a directory
     recursive: bool,
     #[clap(long)]
+    /// To show coping infos
     noise: bool,
     #[clap(long = "no-progress")]
+    /// Disable showing the progress bar
     no_progress_bar: bool,
 }
 
