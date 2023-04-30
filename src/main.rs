@@ -6,7 +6,8 @@ use std::sync::{atomic::AtomicU64, atomic::Ordering, Arc};
 use std::thread;
 
 use clap::Parser;
-use indicatif::{style::TemplateError, ProgressBar, ProgressStyle};
+use error_stack::{IntoReport, Report, Result, ResultExt};
+use indicatif::{ProgressBar, ProgressStyle};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Parser)]
@@ -21,55 +22,86 @@ struct Command {
     no_progress_bar: bool,
 }
 
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Error)]
-enum AntigError {
-    #[error("{0}")]
-    IOErr(#[from] std::io::Error),
-    #[error("{0}")]
-    IndicatifStyleErr(#[from] TemplateError),
-    #[error("cannot copy a directory without recursive process")]
-    CopyDirectoryWithoutRecursiveErr,
-    #[error("{0} is not a directory")]
-    IsNotDirErr(String),
-}
+#[error("Running antig failed")]
+struct AntigErr;
 
-fn main() -> Result<(), AntigError> {
+fn main() -> Result<(), AntigErr> {
     let mut command = Command::parse();
 
     if &command.destination == "." && command.sources.len() == 1 {
         command.destination = PathBuf::from(".")
-            .canonicalize()?
+            .canonicalize()
+            .into_report()
+            .change_context(AntigErr)
+            .attach_printable_lazy(|| "cannot get the canonicalize directory path.")?
             .join(PathBuf::from(&command.sources[0]).file_name().unwrap())
             .as_os_str()
             .to_string_lossy()
             .into_owned();
     }
     if !PathBuf::from(&command.destination).exists() {
-        fs::create_dir(&command.destination)?;
+        fs::create_dir(&command.destination)
+            .into_report()
+            .change_context(AntigErr)
+            .attach_printable_lazy(|| {
+                format!("cannot create a directory `{}`.", &command.destination)
+            })?;
     }
 
     let dir_content_size = Arc::new(AtomicU64::new(0));
     let bar = ProgressBar::new(100);
+    bar.set_style(
+        ProgressStyle::with_template(
+            "{bar:60.cyan/blue} {pos:>7}/{len:7} {percent}% [{elapsed_precise}]",
+        )
+        .into_report()
+        .change_context(AntigErr)
+        .attach_printable_lazy(|| "there is some error to change the progress bar style.")?,
+    );
+
+    get_files_count_recursive(
+        &command.sources,
+        &command.destination,
+        &dir_content_size,
+        command.no_progress_bar,
+    )?;
 
     for source in command.sources {
-        let source_metadata = fs::metadata(&source)?;
-        let destination_metadata = fs::metadata(&command.destination)?;
+        if Path::new(&source)
+            .canonicalize()
+            .into_report()
+            .change_context(AntigErr)?
+            == Path::new(&command.destination)
+                .canonicalize()
+                .into_report()
+                .change_context(AntigErr)?
+        {
+            continue;
+        }
+
+        let source_metadata = fs::metadata(&source)
+            .into_report()
+            .change_context(AntigErr)
+            .attach_printable_lazy(|| format!("cannot get the metadata for `{}`.", &source))?;
+        let destination_metadata = fs::metadata(&command.destination)
+            .into_report()
+            .change_context(AntigErr)
+            .attach_printable_lazy(|| {
+                format!("cannot get the metadata for `{}`.", &command.destination)
+            })?;
 
         if source_metadata.is_dir() {
             if !command.recursive {
-                return Err(AntigError::CopyDirectoryWithoutRecursiveErr);
+                return Err(Report::new(AntigErr)
+                    .attach_printable("cannot copy a directory without recursive process."));
             }
             if !destination_metadata.is_dir() {
-                return Err(AntigError::IsNotDirErr(command.destination.clone()));
+                return Err(Report::new(AntigErr).attach_printable(format!(
+                    "`{}` is not a directory.",
+                    command.destination.clone()
+                )));
             }
-
-            get_files_count_recursive(
-                &source,
-                &command.destination,
-                &dir_content_size,
-                command.no_progress_bar,
-            )?;
 
             copy_directory_recursive(
                 &bar,
@@ -85,7 +117,16 @@ fn main() -> Result<(), AntigError> {
             } else {
                 PathBuf::from(&command.destination)
             };
-            fs::copy(source, destination)?;
+            fs::copy(&source, &destination)
+                .into_report()
+                .change_context(AntigErr)
+                .attach_printable_lazy(|| {
+                    format!(
+                        "coping failed from `{}` into `{}`.",
+                        source,
+                        destination.display()
+                    )
+                })?;
         }
     }
 
@@ -94,15 +135,29 @@ fn main() -> Result<(), AntigError> {
 
 fn visit_dir<const CREATE_DIR: bool>(
     dir: &Path,
-    execlude: &Path,
-    f: &mut dyn FnMut(&DirEntry) -> Result<(), AntigError>,
-    g: Option<&dyn Fn(&DirEntry) -> Result<(), AntigError>>,
-) -> Result<(), AntigError> {
+    destination: &Path,
+    f: &mut dyn FnMut(&DirEntry) -> Result<(), AntigErr>,
+    g: Option<&dyn Fn(&DirEntry) -> Result<(), AntigErr>>,
+) -> Result<(), AntigErr> {
     if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
+        for entry in fs::read_dir(dir).into_report().change_context(AntigErr)? {
+            let entry = entry.into_report().change_context(AntigErr)?;
             let path = entry.path();
-            if path.canonicalize()? == execlude.canonicalize()? {
+            if path
+                .canonicalize()
+                .into_report()
+                .change_context(AntigErr)
+                .attach_printable_lazy(|| {
+                    format!("Cannot get the metadata for `{}`", path.display())
+                })?
+                == destination
+                    .canonicalize()
+                    .into_report()
+                    .change_context(AntigErr)
+                    .attach_printable_lazy(|| {
+                        format!("Cannot get the metadata for `{}`", destination.display())
+                    })?
+            {
                 continue;
             }
 
@@ -110,7 +165,7 @@ fn visit_dir<const CREATE_DIR: bool>(
                 if CREATE_DIR {
                     g.unwrap()(&entry)?;
                 }
-                visit_dir::<CREATE_DIR>(&path, execlude, f, g)?;
+                visit_dir::<CREATE_DIR>(&path, destination, f, g)?;
             } else {
                 f(&entry)?;
             }
@@ -120,27 +175,36 @@ fn visit_dir<const CREATE_DIR: bool>(
 }
 
 fn get_files_count_recursive(
-    source: &str,
+    sources: &[String],
     destination: &str,
     dir_content_size: &Arc<AtomicU64>,
     no_progress_bar: bool,
-) -> Result<(), AntigError> {
+) -> Result<(), AntigErr> {
     if !no_progress_bar {
-        let writer = Arc::clone(&dir_content_size);
-        let source_clone = source.to_string();
-        let destination_clone = destination.to_string();
-        thread::spawn(move || {
-            visit_dir::<false>(
-                &PathBuf::from(source_clone),
-                &PathBuf::from(destination_clone),
-                &mut |_entry| -> Result<(), AntigError> {
-                    writer.fetch_add(1, Ordering::Relaxed);
-                    Ok(())
-                },
-                None,
-            )
-            .unwrap();
-        });
+        for source in sources {
+            let source_metadata = fs::metadata(&source)
+                .into_report()
+                .change_context(AntigErr)
+                .attach_printable_lazy(|| format!("Cannot get the metadata for `{}`.", &source))?;
+
+            if source_metadata.is_dir() {
+                let writer = Arc::clone(&dir_content_size);
+                let source_clone = source.to_string();
+                let destination_clone = destination.to_string();
+                thread::spawn(move || {
+                    visit_dir::<false>(
+                        &PathBuf::from(source_clone),
+                        &PathBuf::from(destination_clone),
+                        &mut |_entry| -> Result<(), AntigErr> {
+                            writer.fetch_add(1, Ordering::Relaxed);
+                            Ok(())
+                        },
+                        None,
+                    )
+                    .unwrap();
+                });
+            }
+        }
     }
 
     Ok(())
@@ -153,17 +217,37 @@ fn copy_directory_recursive(
     dir_content_size: &Arc<AtomicU64>,
     noise: bool,
     no_progress_bar: bool,
-) -> Result<(), AntigError> {
-    bar.set_style(ProgressStyle::with_template(
-        "{bar:60.cyan/blue} {pos:>7}/{len:7} {percent}% [{elapsed_precise}]",
-    )?);
+) -> Result<(), AntigErr> {
+    let make_destination = PathBuf::from(&destination).join(if Path::new(source).is_absolute() {
+        Path::new(source)
+            .strip_prefix(Path::new(source).parent().unwrap_or(Path::new("/")))
+            .unwrap()
+    } else {
+        Path::new(source)
+    });
+    match fs::create_dir(&make_destination) {
+        Ok(_) => {}
+        Err(err) => match err.kind() {
+            std::io::ErrorKind::AlreadyExists => {}
+            _ => {
+                return Err(Report::new(AntigErr).attach_printable(format!(
+                    "Error occurs to create a directory `{}`.\nIOError: {err}",
+                    make_destination.display()
+                )))
+            }
+        },
+    }
 
     visit_dir::<true>(
         &PathBuf::from(&source),
         &PathBuf::from(&destination),
-        &mut |entry| -> Result<(), AntigError> {
-            let destination =
-                PathBuf::from(&destination).join(entry.path().strip_prefix(&source).unwrap());
+        &mut |entry| -> Result<(), AntigErr> {
+            let destination = PathBuf::from(&destination).join(
+                entry
+                    .path()
+                    .strip_prefix(Path::new(source).parent().unwrap_or(Path::new("/")))
+                    .unwrap(),
+            );
 
             if noise {
                 bar.println(format!(
@@ -181,14 +265,48 @@ fn copy_directory_recursive(
                 Ok(_) => {}
                 Err(err) => match err.kind() {
                     std::io::ErrorKind::AlreadyExists => {
-                        let entry_len = entry.metadata()?.len();
-                        let destination_len = PathBuf::from(&destination).metadata()?.len();
+                        let entry_len = entry
+                            .metadata()
+                            .into_report()
+                            .change_context(AntigErr)
+                            .attach_printable_lazy(|| {
+                                format!("Cannot get the metadata for `{}`.", entry.path().display())
+                            })?
+                            .len();
+                        let destination_len = PathBuf::from(&destination)
+                            .metadata()
+                            .into_report()
+                            .change_context(AntigErr)
+                            .attach_printable_lazy(|| {
+                                format!("Cannot get the metadata for `{}`.", destination.display())
+                            })?
+                            .len();
                         if entry_len != destination_len {
-                            fs::remove_file(&destination)?;
-                            fs::copy(entry.path(), &destination)?;
+                            fs::remove_file(&destination)
+                                .into_report()
+                                .change_context(AntigErr)
+                                .attach_printable_lazy(|| {
+                                    format!("cannot remove `{}`.", destination.display())
+                                })?;
+                            fs::copy(entry.path(), &destination)
+                                .into_report()
+                                .change_context(AntigErr)
+                                .attach_printable_lazy(|| {
+                                    format!(
+                                        "coping failed from `{}` into `{}`.",
+                                        entry.path().display(),
+                                        destination.display()
+                                    )
+                                })?;
                         }
                     }
-                    _ => return Err(err.into()),
+                    _ => {
+                        return Err(Report::new(AntigErr).attach_printable(format!(
+                            "Error occurs to copy from `{}` into `{}`.\nIOError: {err}",
+                            entry.path().display(),
+                            destination.display()
+                        )))
+                    }
                 },
             }
 
@@ -198,14 +316,23 @@ fn copy_directory_recursive(
 
             Ok(())
         },
-        Some(&|entry| -> Result<(), AntigError> {
-            let destination =
-                PathBuf::from(&destination).join(entry.path().strip_prefix(&source).unwrap());
-            match fs::create_dir(destination) {
+        Some(&|entry| -> Result<(), AntigErr> {
+            let destination = PathBuf::from(&destination).join(
+                entry
+                    .path()
+                    .strip_prefix(Path::new(source).parent().unwrap_or(Path::new("/")))
+                    .unwrap(),
+            );
+            match fs::create_dir(&destination) {
                 Ok(_) => {}
                 Err(err) => match err.kind() {
                     std::io::ErrorKind::AlreadyExists => {}
-                    _ => return Err(err.into()),
+                    _ => {
+                        return Err(Report::new(AntigErr).attach_printable(format!(
+                            "Error occurs to create a directory `{}`.\nIOError: {err}",
+                            destination.display()
+                        )))
+                    }
                 },
             }
             Ok(())
