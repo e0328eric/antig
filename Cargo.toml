@@ -1,6 +1,6 @@
 [package]
 name = "antig"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT"
 description = "A simple `cp` command"
 authors = ["Sungbae Jeong <almagest0328@gmail.com>"]

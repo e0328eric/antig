@@ -83,23 +83,12 @@ fn main() -> Result<(), AntigErr> {
             continue;
         }
 
-        let source_metadata = fs::metadata(&source)
-            .into_report()
-            .change_context(AntigErr)
-            .attach_printable_lazy(|| format!("cannot get the metadata for `{}`.", &source))?;
-        let destination_metadata = fs::metadata(&command.destination)
-            .into_report()
-            .change_context(AntigErr)
-            .attach_printable_lazy(|| {
-                format!("cannot get the metadata for `{}`.", &command.destination)
-            })?;
-
-        if source_metadata.is_dir() {
+        if Path::new(&source).is_dir() {
             if !command.recursive {
                 return Err(Report::new(AntigErr)
                     .attach_printable("cannot copy a directory without recursive process."));
             }
-            if !destination_metadata.is_dir() {
+            if !Path::new(&command.destination).is_dir() {
                 return Err(Report::new(AntigErr).attach_printable(format!(
                     "`{}` is not a directory.",
                     command.destination.clone()
@@ -115,7 +104,7 @@ fn main() -> Result<(), AntigErr> {
                 command.no_progress_bar,
             )?;
         } else {
-            let destination = if destination_metadata.is_dir() {
+            let destination = if Path::new(&command.destination).is_dir() {
                 PathBuf::from(&command.destination).join(&source)
             } else {
                 PathBuf::from(&command.destination)
@@ -185,12 +174,7 @@ fn get_files_count_recursive(
 ) -> Result<(), AntigErr> {
     if !no_progress_bar {
         for source in sources {
-            let source_metadata = fs::metadata(&source)
-                .into_report()
-                .change_context(AntigErr)
-                .attach_printable_lazy(|| format!("Cannot get the metadata for `{}`.", &source))?;
-
-            if source_metadata.is_dir() {
+            if Path::new(source).is_dir() {
                 let writer = Arc::clone(&dir_content_size);
                 let source_clone = source.to_string();
                 let destination_clone = destination.to_string();
