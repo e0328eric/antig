@@ -1,0 +1,23 @@
+.{
+    .name = .antig,
+    .version = "0.0.0",
+    .fingerprint = 0x8d98cd49619606d5,
+
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        .badepo = .{
+            .url = "git+https://github.com/e0328eric/badepo.git#970978db6c05d1f660da8c9a5d0156949c70bea4",
+            .hash = "badepo-0.1.0-bmhQE_0lAADLqI8Rdo4CvdrwKEUAfatJylfz05U3gXu6",
+        },
+        .zlap = .{
+            .url = "git+https://github.com/e0328eric/zlap.git#22f0f0f1f12e9cdccb0730492ea0fc00c5408cf3",
+            .hash = "zlap-0.6.1-AAAAAAu6AADlTvAd0rhTLg1wlmeQEt4N_GKKP1lh0Ck8",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

@@ -1,0 +1,17 @@
+{
+    #main;
+    #name: antig;
+    #desc: A latex transpiler;
+
+    #arg;
+    meta: SOURCE;
+    desc: source path;
+    type: string;
+    default:;
+    
+    #arg;
+    meta: DESTINATION;
+    desc: destination path;
+    type: string;
+    default:;
+}
